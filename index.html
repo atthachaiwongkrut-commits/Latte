@@ -131,7 +131,7 @@ canvas {width:100%;height:320px}
   <th>Ticker</th><th>Weight %</th><th>CAGR</th>
   <th>Volatility</th><th>Max Drawdown</th>
   <th>Sharpe</th><th>Sortino</th><th>Calmar</th>
-  <th>TER</th><th>Data Start</th><th>Data End</th>
+  <th>TER</th><th>Projection Start</th><th>Projection End (+20Y)</th>
   <th>Remove</th>
 </tr></thead>
 <tbody id="assetRows"></tbody>
@@ -348,8 +348,15 @@ function render(){
 
     const exp=p.expense;
     cell(tr,typeof exp==="number"?pct(exp):"—");
-    cell(tr,m.start||"—");
-    cell(tr,m.end||"—");
+    cell(tr, new Date().toLocaleDateString("en-CA"));
+cell(
+  tr,
+  new Date(
+    new Date().getFullYear() + 20,
+    new Date().getMonth(),
+    new Date().getDate()
+  ).toLocaleDateString("en-CA")
+);
 
     if(a.weight>0){
       activeWeight+=a.weight;
