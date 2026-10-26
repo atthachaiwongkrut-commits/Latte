@@ -1,315 +1,608 @@
-<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Portfolio Lab | Live Comparison</title><style>
-:root{color-scheme:dark;--bg:#08121c;--panel:#111f2c;--line:#263847;--light:#ecf5fa;--dim:#9bb0c0;--mint:#64e1b1}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 80% 0%,#193548,var(--bg) 57%);color:var(--light);font-family:system-ui,'Segoe UI',Tahoma,sans-serif}main{max-width:1350px;margin:auto;padding:32px 22px 80px}.eyebrow{color:var(--mint);letter-spacing:2px;text-transform:uppercase;font-size:12px;font-weight:800}h1{font-size:clamp(35px,5vw,62px);line-height:1.07;margin:12px 0 16px}h2{font-size:24px;margin:0 0 14px}p{color:var(--dim);line-height:1.7}.panel{background:rgba(16,31,44,.95);border:1px solid var(--line);border-radius:18px;padding:19px;margin:17px 0;box-shadow:0 10px 40px #0002}.controls{display:flex;gap:12px;flex-wrap:wrap;align-items:end}.field{display:grid;gap:6px}.field label{color:var(--dim);font-size:12px}input,select{background:#091721;color:var(--light);border:1px solid #3c5061;border-radius:10px;padding:11px;font-size:15px}input[type=text]{text-transform:uppercase;min-width:180px}button{background:#1e3948;color:var(--light);border:1px solid #385465;padding:11px 15px;border-radius:10px;font-weight:750;cursor:pointer}button:hover{filter:brightness(1.18)}button.primary{background:#277b69;border-color:#277b69}.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.chip{padding:8px 11px;border:1px solid #34516a;border-radius:10px;background:#102b38;display:flex;gap:13px;align-items:center;font-weight:700}.chip button{padding:0 3px;background:transparent;border:0;color:#ff9aa3;font-size:18px}.scroller{overflow:auto}table{width:100%;border-collapse:collapse;min-width:1050px}th,td{padding:12px;border-bottom:1px solid #283c4b;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:#12232f}th{color:#aac1d1;font-size:12px;font-weight:750}td{font-size:14px}td span{color:var(--dim);font-size:12px}td.good{color:#70e2b2}td.bad{color:#ff979b}.matrix{min-width:0;width:auto}.matrix td,.matrix th{text-align:center;min-width:90px}.matrix th:first-child,.matrix td:first-child{text-align:left}.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}.muted{color:var(--dim);font-size:13px}.state{font-size:14px;margin-top:10px}.error{color:#ffabb0}.loading{color:#a6e5ff}.profiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.profile{border:1px solid var(--line);background:#0b1a25;padding:16px;border-radius:14px}.profile h3{margin:0 0 5px;font-size:19px}.profile p{font-size:13px;margin:9px 0}.subtle{font-size:11px;color:#8fa8b7;margin-top:20px}@media(max-width:900px){.two{grid-template-columns:1fr}} 
-</style></head><body><main>
-<div class="eyebrow">Live portfolio analytics · Auto fetch</div><h1>Stock & ETF Comparison</h1><p>เพิ่ม Ticker ใหม่แล้วระบบดึงราคาย้อนหลัง คำนวณ CAGR, Risk Metrics, Rolling Return, Correlation และ Overlap จากข้อมูลที่มีให้ทันที ไม่ต้อง import CSV</p>
-<section class="panel"><div class="controls"><div class="field"><label>เพิ่มหุ้น / ETF</label><input id="ticker" type="text" placeholder="เช่น GOOGL, NVDA, VT" maxlength="22"></div><button class="primary" id="add">+ Add Ticker</button><div class="field"><label>Historical period</label><select id="years"><option value="3">3 ปี</option><option value="5" selected>5 ปี</option><option value="10">10 ปี</option><option value="max">ทั้งหมด</option></select></div><div class="field"><label>Rolling Return</label><select id="rolling"><option value="12">12 เดือน</option><option value="36">36 เดือน</option><option value="60">60 เดือน</option></select></div><div class="field"><label>Risk-free rate (%)</label><input id="rf" type="number" value="3" min="-5" max="30" step="0.5" style="width:100px"></div><button id="refresh">↻ อัปเดตข้อมูล</button></div><div class="chips" id="chips"></div><div class="state" id="status">เชื่อมต่อข้อมูลตลาดเมื่อเปิดผ่านโปรแกรม Python</div></section>
-<section class="panel"><h2>Performance & Risk Comparison</h2><div class="scroller"><table><thead><tr><th>Ticker</th><th>CAGR</th><th>Volatility</th><th>Max Drawdown</th><th>Sharpe</th><th>Sortino</th><th>Calmar</th><th>Rolling Latest</th><th>Rolling Min</th><th>Rolling Max</th><th>ช่วงข้อมูล</th></tr></thead><tbody id="stats"><tr><td colspan="11" style="text-align:left">กำลังรอเชื่อมข้อมูล...</td></tr></tbody></table></div></section>
-<div class="two"><section class="panel"><h2>Correlation Matrix</h2><p class="muted">Pearson correlation ของผลตอบแทนรายเดือน โดยอิงเดือนที่ข้อมูลซ้อนทับกัน</p><div class="scroller" id="corr"></div></section><section class="panel"><h2>Holdings Overlap</h2><p class="muted">ความซ้ำซ้อนเฉพาะ Top Holdings ที่แหล่งข้อมูลรายงาน จึงเป็นค่าขั้นต่ำ ไม่ใช่ overlap ทั้งกอง; หุ้นรายตัวไม่มี portfolio holdings</p><div class="scroller" id="overlap"></div></section></div>
-<section class="panel"><h2>About Each Asset</h2><div id="profiles" class="profiles"></div></section>
-<p class="subtle">วิธีคำนวณ: ราคาปรับปรุงย้อนหลังรายเดือน (รวมผลจากการปรับเงินปันผลโดยประมาณ) จาก Yahoo Finance ผ่าน yfinance; CAGR annualized; Sharpe/Sortino ใช้ risk-free 3% ต่อปีตามค่าที่เลือก; MDD จากจุดสูงสุดในช่วงวิเคราะห์. Rolling Return เป็นผลตอบแทนสะสมของหน้าต่างย้อนหลังที่เลือก ค่าใดไม่มีข้อมูลจะแสดง — ไม่ใช่ศูนย์. ใช้เพื่อการศึกษา ไม่รับประกันผลตอบแทน</p>
-</main><script>
-let tickers=JSON.parse(localStorage.getItem('tickersLive')||'null')||['VOO','QQQM','SCHG'];let last=null;let serial=0;
-const $=id=>document.getElementById(id);const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const pct=x=>x==null?'—':(x*100).toFixed(2)+'%';const dec=x=>x==null?'—':Number(x).toFixed(2);const store=()=>localStorage.setItem('tickersLive',JSON.stringify(tickers));
-function renderChips(){$('chips').innerHTML=tickers.map(t=>`<div class="chip">${esc(t)} <button aria-label="remove ${esc(t)}" data-del="${esc(t)}">×</button></div>`).join('');document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{tickers=tickers.filter(t=>t!==b.dataset.del);store();renderChips();load()})}
-$('add').onclick=()=>{const t=$('ticker').value.trim().toUpperCase();if(!/^[A-Z0-9^.=-]{1,22}$/.test(t)){alert('Ticker ไม่ถูกต้อง');return}if(tickers.includes(t)){alert('มี '+t+' แล้ว');return}if(tickers.length>=20){alert('รองรับสูงสุด 20 Tickers');return}tickers.push(t);$('ticker').value='';store();renderChips();load()};$('ticker').onkeydown=e=>{if(e.key==='Enter')$('add').click()};['years','rolling','rf'].forEach(id=>$(id).onchange=load);$('refresh').onclick=load;
-function mat(box,values,format){const good=tickers.filter(t=>last?.data?.[t]);$(box).innerHTML='<table class="matrix"><thead><tr><th></th>'+good.map(t=>'<th>'+esc(t)+'</th>').join('')+'</tr></thead><tbody>'+good.map(a=>'<tr><th>'+esc(a)+'</th>'+good.map(b=>'<td>'+format(values?.[a]?.[b])+'</td>').join('')+'</tr>').join('')+'</tbody></table>'}
-async function load(){if(!tickers.length){$('status').textContent='เพิ่ม Ticker เพื่อเริ่มเปรียบเทียบ';$('stats').innerHTML='';$('corr').innerHTML='';$('overlap').innerHTML='';$('profiles').innerHTML='';return}const my=++serial;$('status').className='state loading';$('status').textContent='กำลังดึงข้อมูลย้อนหลังและคำนวณ...';try{let r=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers,years:$('years').value,rolling:+$('rolling').value,rf:+$('rf').value/100})});let v=await r.json();if(!r.ok)throw Error(v.error||'Server error');if(my!==serial)return;last=v;
-$('stats').innerHTML=tickers.map(t=>{let a=v.data[t],m=a?.metrics;if(!m)return `<tr><td><b>${esc(t)}</b></td><td colspan="10" class="error" style="text-align:left">${esc(v.errors[t]||'ข้อมูลน้อยกว่า 12 เดือน')}</td></tr>`;return `<tr><td><b>${esc(t)}</b><br><span>${esc(a.profile.name).slice(0,36)}</span></td><td class="good">${pct(m.cagr)}</td><td>${pct(m.volatility)}</td><td class="bad">${pct(m.max_drawdown)}</td><td>${dec(m.sharpe)}</td><td>${dec(m.sortino)}</td><td>${dec(m.calmar)}</td><td>${pct(m.rolling_latest)}</td><td>${pct(m.rolling_min)}</td><td>${pct(m.rolling_max)}</td><td>${m.start}<br><span>${m.end}</span></td></tr>`}).join('');
-mat('corr',v.correlation,dec);mat('overlap',v.overlap,pct);
-$('profiles').innerHTML=tickers.filter(t=>v.data[t]).map(t=>{let p=v.data[t].profile;return `<div class="profile"><h3>${esc(t)}</h3><strong>${esc(p.name)}</strong><p>ประเภท: ${esc(p.type)} · ${esc(p.sector||p.category||'—')} · ${esc(p.currency||'—')}</p><p>Expense Ratio: ${p.expense==null?'ไม่พร้อมใช้งาน':pct(p.expense)}</p><p>${esc(p.description||'ไม่มีคำอธิบายจากแหล่งข้อมูล')}</p><p class="muted">Top holdings available: ${v.data[t].holdings_count}</p></div>`}).join('');
-$('status').className='state';$('status').textContent=`อัปเดต ${v.asof} · ข้อมูลสำเร็จ ${Object.keys(v.data).length}/${tickers.length} Tickers` + (Object.keys(v.errors).length?' · บางตัวโหลดไม่สำเร็จ':'');
-}catch(e){if(my!==serial)return;$('status').className='state error';$('status').textContent='เชื่อมข้อมูลไม่ได้: '+e.message+' — ต้องเปิดเว็บผ่าน start_windows.bat / server.py และมีอินเทอร์เน็ต';}}
-renderChips();load();
-</script>
-<!-- LATTE PERSONAL PORTFOLIO BUILDER -->
+
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Latte Portfolio Lab</title>
 <style>
-#lattePB {
-  max-width: 1300px;
-  margin: 30px auto;
-  padding: 24px;
-  background: #10212f;
-  border: 1px solid #304659;
-  border-radius: 18px;
-  color: white;
-  font-family: system-ui, sans-serif;
+:root {
+  --bg:#07121d;
+  --panel:#102232;
+  --sub:#0a1b2a;
+  --line:#29465a;
+  --text:#eaf5ff;
+  --muted:#96b6cc;
+  --green:#43d6aa;
+  --red:#ff7988;
+  --blue:#70b6ff;
 }
-#lattePB h2 {margin-top:0}
-#lattePB p {color:#a8bdce}
-#lattePB input {
-  background:#081724;
-  color:white;
-  border:1px solid #425b6b;
-  padding:12px;
-  border-radius:9px;
-  width:100%;
+* {box-sizing:border-box}
+body {
+  margin:0;background:var(--bg);color:var(--text);
+  font-family:system-ui,Arial,sans-serif;
 }
-#lattePB button {
+main {max-width:1500px;margin:auto;padding:24px}
+h1 {font-size:clamp(30px,5vw,52px);margin:8px 0}
+h2 {font-size:23px;margin:0 0 16px}
+p {color:var(--muted);line-height:1.65}
+.panel {
+  background:var(--panel);border:1px solid var(--line);
+  border-radius:20px;padding:22px;margin:20px 0;
+}
+.grid {
+  display:grid;grid-template-columns:repeat(4,1fr);gap:14px;
+}
+.metric {
+  background:var(--sub);padding:17px;border-radius:13px;
+  min-width:0;
+}
+.metric small {color:var(--muted)}
+.metric strong {
+  display:block;font-size:25px;margin-top:8px;
+  overflow-wrap:anywhere;
+}
+.controls {
+  display:flex;gap:12px;align-items:end;flex-wrap:wrap;
+}
+.field {flex:1;min-width:130px}
+label {display:block;color:var(--muted);font-size:13px;margin-bottom:7px}
+input,select {
+  background:#071725;border:1px solid #355268;
+  color:white;border-radius:10px;padding:12px;
+  font-size:15px;width:100%;
+}
+button {
+  padding:12px 16px;border-radius:10px;border:0;
+  background:#287c6d;color:white;font-weight:bold;
   cursor:pointer;
-  padding:11px 15px;
-  background:#286f63;
-  border:0;
-  border-radius:9px;
-  color:white;
-  font-weight:bold;
 }
-#lattePB .pb-controls {
-  display:grid;
-  grid-template-columns:2fr 1fr auto auto;
-  gap:10px;
-  margin:20px 0;
+button:hover {filter:brightness(1.15)}
+button.secondary {background:#29445a}
+button.danger {background:#63323f}
+button:disabled {opacity:.5;cursor:wait}
+.tablewrap {overflow-x:auto;margin-top:16px}
+table {border-collapse:collapse;width:100%;min-width:940px}
+th,td {
+  padding:13px 11px;text-align:left;
+  border-bottom:1px solid var(--line);
+  white-space:nowrap;
 }
-#lattePB .pb-scroll {overflow-x:auto}
-#lattePB table {
-  width:100%;
-  border-collapse:collapse;
-  min-width:850px;
+th {color:#a4d7ee;font-size:13px;background:#132a3b}
+td {font-size:14px}
+td input {max-width:90px}
+.positive {color:var(--green)}
+.negative {color:var(--red)}
+.muted {color:var(--muted)}
+.status {padding:12px 0;font-size:14px}
+.two {display:grid;grid-template-columns:1fr 1fr;gap:18px}
+canvas {width:100%;height:320px}
+.tag {
+  display:inline-block;background:#173247;
+  border:1px solid #315469;border-radius:8px;
+  padding:6px 10px;margin:3px;
 }
-#lattePB th,#lattePB td {
-  padding:12px;
-  border-bottom:1px solid #324657;
-  text-align:left;
+.note {font-size:12px;color:var(--muted);line-height:1.7}
+@media(max-width:1000px) {
+  .grid {grid-template-columns:repeat(2,1fr)}
+  .two {grid-template-columns:1fr}
 }
-#lattePB th {color:#94d9e5}
-#lattePB td input {width:90px}
-#lattePB .pb-summary {
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
-  gap:12px;
-  margin:20px 0;
-}
-#lattePB .pb-card {
-  background:#0a1926;
-  padding:15px;
-  border-radius:12px;
-}
-#lattePB .pb-card strong {
-  display:block;
-  font-size:24px;
-  margin-top:6px;
-}
-#lattePB .pb-error {color:#ff9292}
-@media(max-width:650px) {
-  #lattePB .pb-controls {grid-template-columns:1fr 1fr}
+@media(max-width:600px) {
+  main {padding:12px}
+  .grid {grid-template-columns:1fr 1fr}
+  .metric strong {font-size:20px}
+  .panel {padding:15px}
 }
 </style>
+</head>
+<body>
+<main>
+<header>
+  <p style="color:var(--green)">LATTE · INVESTMENT ANALYTICS</p>
+  <h1>Personal Portfolio Lab</h1>
+  <p>เลือกหุ้นและ ETF เอง วิเคราะห์ผลตอบแทน ความเสี่ยง
+  ค่าธรรมเนียม และการเติบโตของพอร์ตจากข้อมูลย้อนหลัง</p>
+</header>
 
-<section id="lattePB">
-  <h2>Personal Portfolio Builder</h2>
-  <p>เลือกหุ้นหรือ ETF เอง ปรับน้ำหนัก และเปรียบเทียบผลตอบแทนกับความเสี่ยงย้อนหลัง</p>
-
-  <div class="pb-controls">
-    <input id="pbTicker" placeholder="Ticker เช่น VOO, NVDA, GOOGL">
-    <input id="pbWeight" type="number" placeholder="Weight %" min="0" max="100">
-    <button id="pbAdd">+ Add</button>
-    <button id="pbAnalyze">Analyze</button>
+<section class="panel">
+<h2>Portfolio Builder</h2>
+<div class="controls">
+  <div class="field" style="flex:2">
+    <label>Stock / ETF Ticker</label>
+    <input id="ticker" placeholder="VOO, NVDA, GOOGL">
   </div>
-
-  <div id="pbMessage"></div>
-  <div class="pb-summary" id="pbSummary"></div>
-
-  <div class="pb-scroll">
-    <table>
-      <thead>
-        <tr>
-          <th>Ticker</th>
-          <th>Weight</th>
-          <th>CAGR</th>
-          <th>Volatility</th>
-          <th>Max Drawdown</th>
-          <th>Sharpe</th>
-          <th>Sortino</th>
-          <th>Calmar</th>
-          <th>Remove</th>
-        </tr>
-      </thead>
-      <tbody id="pbRows"></tbody>
-    </table>
+  <div class="field">
+    <label>Weight (%)</label>
+    <input id="newWeight" type="number" min="0" max="100" value="10">
   </div>
-
-  <p>สถิติมาจากข้อมูลย้อนหลังที่เซิร์ฟเวอร์ส่งกลับ ช่องที่ไม่มีข้อมูลจะแสดง —</p>
+  <button id="add">+ Add Asset</button>
+  <button id="equal" class="secondary">Equal Weight</button>
+  <button id="normalize" class="secondary">Normalize</button>
+</div>
+<div class="grid" style="margin-top:18px">
+  <div class="metric"><small>Assets</small><strong id="assetCount">0</strong></div>
+  <div class="metric"><small>Total Weight</small><strong id="totalWeight">0%</strong></div>
+  <div class="metric"><small>Weighted TER</small><strong id="ter">—</strong></div>
+  <div class="metric"><small>Data Period</small><strong id="periodLabel">—</strong></div>
+</div>
+<div class="tablewrap">
+<table>
+<thead><tr>
+  <th>Ticker</th><th>Weight %</th><th>CAGR</th>
+  <th>Volatility</th><th>Max Drawdown</th>
+  <th>Sharpe</th><th>Sortino</th><th>Calmar</th>
+  <th>TER</th><th>Data Start</th><th>Data End</th>
+  <th>Remove</th>
+</tr></thead>
+<tbody id="assetRows"></tbody>
+</table>
+</div>
 </section>
 
+<section class="panel">
+<h2>Analysis Settings</h2>
+<div class="controls">
+  <div class="field">
+    <label>Historical Period</label>
+    <select id="years">
+      <option value="3">3 Years</option>
+      <option value="5" selected>5 Years</option>
+      <option value="10">10 Years</option>
+      <option value="max">Maximum Available</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Rolling Return</label>
+    <select id="rolling">
+      <option value="12">12 Months</option>
+      <option value="36">36 Months</option>
+      <option value="60">60 Months</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Risk-free Rate (%)</label>
+    <input id="rf" type="number" value="3" step="0.25">
+  </div>
+  <div class="field">
+    <label>Initial Capital</label>
+    <input id="initial" type="number" value="0" min="0">
+  </div>
+  <div class="field">
+    <label>Monthly DCA</label>
+    <input id="monthly" type="number" value="1000" min="0">
+  </div>
+  <button id="analyze">Analyze Portfolio</button>
+</div>
+<div id="status" class="status muted">
+  กำหนดสัดส่วนรวมให้เป็น 100% แล้วกด Analyze
+</div>
+</section>
+
+<section class="panel">
+<h2>Portfolio Performance & Risk</h2>
+<div class="grid">
+  <div class="metric"><small>Portfolio CAGR</small><strong id="pcagr">—</strong></div>
+  <div class="metric"><small>Volatility</small><strong id="pvol">—</strong></div>
+  <div class="metric"><small>Max Drawdown</small><strong id="pmdd">—</strong></div>
+  <div class="metric"><small>Sharpe Ratio</small><strong id="psharpe">—</strong></div>
+  <div class="metric"><small>Sortino Ratio</small><strong id="psortino">—</strong></div>
+  <div class="metric"><small>Calmar Ratio</small><strong id="pcalmar">—</strong></div>
+  <div class="metric"><small>Rolling Latest</small><strong id="proll">—</strong></div>
+  <div class="metric"><small>Historical Months</small><strong id="pmonths">—</strong></div>
+</div>
+<p class="note" id="portfolioMethod">
+  ผลพอร์ตเป็นการจำลองตามสัดส่วน ไม่ใช่ผลตอบแทนที่รับประกัน
+</p>
+</section>
+
+<section class="panel">
+<h2>Historical DCA Backtest</h2>
+<div class="grid">
+  <div class="metric"><small>Ending Value</small><strong id="ending">—</strong></div>
+  <div class="metric"><small>Contributed</small><strong id="contributed">—</strong></div>
+  <div class="metric"><small>Profit / Loss</small><strong id="profit">—</strong></div>
+  <div class="metric"><small>Return on Contributions</small><strong id="roi">—</strong></div>
+</div>
+<canvas id="dcaChart"></canvas>
+<p class="note">
+  ใช้ผลตอบแทนที่เกิดขึ้นในอดีต เงินลงทุนรายเดือนเข้าตอนสิ้นเดือน
+  ไม่รวมภาษี ค่าซื้อขาย และ FX; จำนวนเงินต้องเป็นสกุลเดียวกับราคาที่ใช้
+</p>
+</section>
+
+<div class="two">
+<section class="panel">
+  <h2>Correlation Matrix</h2>
+  <p>ความสัมพันธ์ของผลตอบแทนย้อนหลังระหว่างสินทรัพย์</p>
+  <div class="tablewrap" id="corr"></div>
+</section>
+<section class="panel">
+  <h2>ETF Holdings Overlap</h2>
+  <p>ความซ้ำซ้อนจาก Holdings ที่แหล่งข้อมูลเปิดเผย
+  ไม่ใช่ Full Holdings Overlap หากข้อมูลไม่ครบ</p>
+  <div class="tablewrap" id="overlap"></div>
+</section>
+</div>
+
+<section class="panel">
+<h2>Rolling Return Comparison</h2>
+<div class="tablewrap">
+<table>
+<thead><tr>
+  <th>Ticker</th><th>Rolling Latest</th>
+  <th>Rolling Min</th><th>Rolling Max</th>
+  <th>Period Start</th><th>Period End</th>
+</tr></thead>
+<tbody id="rollingRows"></tbody>
+</table>
+</div>
+</section>
+
+<section class="panel">
+<h2>Asset Fundamentals</h2>
+<div class="tablewrap">
+<table>
+<thead><tr>
+  <th>Ticker</th><th>Name</th><th>Type</th><th>Sector</th>
+  <th>P/E</th><th>Forward P/E</th><th>P/B</th>
+  <th>Beta</th><th>Market Cap</th><th>TER</th>
+</tr></thead>
+<tbody id="fundamentals"></tbody>
+</table>
+</div>
+<p class="note">ข้อมูลพื้นฐานและ TER อาจไม่มีสำหรับหลักทรัพย์บางตัว
+  — หมายถึงแหล่งข้อมูลไม่ส่งค่าที่ตรวจสอบได้</p>
+</section>
+
+<section class="panel">
+<h2>Data Methodology</h2>
+<p id="method">ยังไม่ได้วิเคราะห์</p>
+<p class="note">
+  ข้อมูลจาก Yahoo Finance ผ่าน Backend ·
+  ไม่ใช่ราคา Real-time ที่รับประกัน ·
+  ข้อมูลสถิติย้อนหลังขึ้นอยู่กับความถี่และช่วงเวลาที่เลือก
+</p>
+</section>
+</main>
+
 <script>
-(() => {
-  const $ = id => document.getElementById(id);
-  const saved = localStorage.getItem("lattePersonalPortfolio");
-  let portfolio;
+const $=id=>document.getElementById(id);
+const KEY="lattePortfolioV3";
 
-  try {
-    portfolio = saved ? JSON.parse(saved) : [
-      {ticker:"VOO",weight:60},
-      {ticker:"QQQM",weight:25},
-      {ticker:"SCHG",weight:15}
-    ];
-    if (!Array.isArray(portfolio)) throw Error();
-  } catch {
-    portfolio = [];
-  }
+let assets;
+try {
+  assets=JSON.parse(localStorage.getItem(KEY)) || [
+    {ticker:"VOO",weight:60},
+    {ticker:"QQQM",weight:25},
+    {ticker:"SCHG",weight:15}
+  ];
+  if(!Array.isArray(assets))throw Error();
+} catch(e) {assets=[]}
 
-  let metrics = {};
+let result=null;
 
-  function save() {
-    localStorage.setItem(
-      "lattePersonalPortfolio",
-      JSON.stringify(portfolio)
-    );
-  }
-
-  function percentage(value) {
-    return typeof value === "number"
-      ? (value*100).toFixed(2)+"%"
-      : "—";
-  }
-
-  function ratio(value) {
-    return typeof value === "number"
-      ? value.toFixed(2)
-      : "—";
-  }
-
-  function render() {
-    const total = portfolio.reduce(
-      (sum,item) => sum+item.weight,0
-    );
-
-    $("pbSummary").innerHTML = `
-      <div class="pb-card">
-        Assets <strong>${portfolio.length}</strong>
-      </div>
-      <div class="pb-card">
-        Total Weight <strong>${total.toFixed(1)}%</strong>
-      </div>
-      <div class="pb-card">
-        Allocation <strong style="font-size:16px">
-          ${Math.abs(total-100)<0.01?"Valid":"Adjust to 100%"}
-        </strong>
-      </div>
-    `;
-
-    $("pbRows").replaceChildren();
-
-    portfolio.forEach((item,index) => {
-      const m=metrics[item.ticker] || {};
-      const tr=document.createElement("tr");
-
-      const name=document.createElement("td");
-      name.textContent=item.ticker;
-      tr.appendChild(name);
-
-      const weightCell=document.createElement("td");
-      const weightInput=document.createElement("input");
-      weightInput.type="number";
-      weightInput.min="0";
-      weightInput.max="100";
-      weightInput.step="0.5";
-      weightInput.value=item.weight;
-      weightInput.onchange=()=>{
-        item.weight=Math.max(0,Math.min(100,
-          Number(weightInput.value)||0));
-        save();
-        render();
-      };
-      weightCell.appendChild(weightInput);
-      tr.appendChild(weightCell);
-
-      const values=[
-        percentage(m.cagr),
-        percentage(m.volatility),
-        percentage(m.max_drawdown),
-        ratio(m.sharpe),
-        ratio(m.sortino),
-        ratio(m.calmar)
-      ];
-
-      values.forEach(v=>{
-        const td=document.createElement("td");
-        td.textContent=v;
-        tr.appendChild(td);
-      });
-
-      const remove=document.createElement("td");
-      const btn=document.createElement("button");
-      btn.textContent="×";
-      btn.onclick=()=>{
-        portfolio.splice(index,1);
-        save();
-        render();
-      };
-      remove.appendChild(btn);
-      tr.appendChild(remove);
-      $("pbRows").appendChild(tr);
-    });
-  }
-
-  $("pbAdd").onclick=()=>{
-    const ticker=$("pbTicker").value.trim().toUpperCase();
-    const weight=Number($("pbWeight").value)||0;
-
-    if(!/^[A-Z0-9.^=-]{1,22}$/.test(ticker)){
-      $("pbMessage").textContent="Ticker ไม่ถูกต้อง";
-      return;
-    }
-    if(portfolio.some(x=>x.ticker===ticker)){
-      $("pbMessage").textContent="มีหุ้นตัวนี้แล้ว";
-      return;
-    }
-    if(weight<0 || weight>100){
-      $("pbMessage").textContent="Weight ต้องอยู่ระหว่าง 0–100";
-      return;
-    }
-
-    portfolio.push({ticker,weight});
-    save();
-    $("pbTicker").value="";
-    $("pbWeight").value="";
-    $("pbMessage").textContent="";
-    render();
-  };
-
-  $("pbAnalyze").onclick=async()=>{
-    const total=portfolio.reduce((s,x)=>s+x.weight,0);
-    if(Math.abs(total-100)>0.01){
-      $("pbMessage").textContent="กรุณาให้ Weight รวมเป็น 100%";
-      return;
-    }
-    $("pbMessage").textContent="กำลังดึงข้อมูล...";
-
-    try {
-      const response=await fetch("/api/analyze",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          tickers:portfolio.map(x=>x.ticker),
-          weights:Object.fromEntries(
-            portfolio.map(x=>[x.ticker,x.weight])
-          ),
-          years:5,
-          rolling:12,
-          rf:0.03
-        })
-      });
-
-      const result=await response.json();
-      if(!response.ok) throw Error(result.error||"API error");
-
-      metrics={};
-      for(const [ticker,data] of Object.entries(result.data||{})){
-        metrics[ticker]=data.metrics||{};
-      }
-
-      const failed=Object.keys(result.errors||{});
-      $("pbMessage").textContent=failed.length
-        ? "ข้อมูลบางตัวไม่พร้อม: "+failed.join(", ")
-        : "อัปเดตข้อมูลเรียบร้อย";
-      render();
-    } catch(error) {
-      $("pbMessage").textContent=
-        "ดึงข้อมูลไม่ได้: "+error.message;
-    }
-  };
-
+function persist(){
+  localStorage.setItem(KEY,JSON.stringify(assets));
+}
+function sumWeight(){
+  return assets.reduce((n,a)=>n+Number(a.weight),0);
+}
+function pct(v){
+  return typeof v==="number" && Number.isFinite(v)
+    ?(v*100).toFixed(2)+"%":"—";
+}
+function dec(v){
+  return typeof v==="number" && Number.isFinite(v)
+    ?v.toFixed(2):"—";
+}
+function money(v){
+  return typeof v==="number" && Number.isFinite(v)
+    ?new Intl.NumberFormat("en-US",{maximumFractionDigits:2}).format(v)
+    :"—";
+}
+function cell(tr,value){
+  const td=document.createElement("td");
+  td.textContent=value===null||value===undefined?"—":String(value);
+  tr.appendChild(td);
+  return td;
+}
+function clearStats(){
+  result=null;
   render();
-})();
+}
+function render(){
+  const total=sumWeight();
+  $("assetCount").textContent=assets.length;
+  $("totalWeight").textContent=total.toFixed(1)+"%";
+  $("totalWeight").style.color=
+    Math.abs(total-100)<.001?"var(--green)":"var(--red)";
+
+  const tbody=$("assetRows");
+  tbody.replaceChildren();
+
+  let knownTER=0,missingTER=[],activeWeight=0;
+
+  assets.forEach((a,i)=>{
+    const tr=document.createElement("tr");
+    cell(tr,a.ticker);
+
+    const td=document.createElement("td");
+    const input=document.createElement("input");
+    input.type="number";input.min="0";input.max="100";
+    input.step="0.5";input.value=a.weight;
+    input.onchange=()=>{
+      a.weight=Math.max(0,Math.min(100,Number(input.value)||0));
+      persist();clearStats();
+    };
+    td.appendChild(input);tr.appendChild(td);
+
+    const data=result?.data?.[a.ticker];
+    const m=data?.metrics || {};
+    const p=data?.profile || {};
+
+    [
+      pct(m.cagr),pct(m.volatility),pct(m.max_drawdown),
+      dec(m.sharpe),dec(m.sortino),dec(m.calmar)
+    ].forEach(v=>cell(tr,v));
+
+    const exp=p.expense;
+    cell(tr,typeof exp==="number"?pct(exp):"—");
+    cell(tr,m.start||"—");
+    cell(tr,m.end||"—");
+
+    if(a.weight>0){
+      activeWeight+=a.weight;
+      if(typeof exp==="number"){
+        knownTER+=a.weight*exp;
+      }else missingTER.push(a.ticker);
+    }
+
+    const remove=document.createElement("td");
+    const btn=document.createElement("button");
+    btn.className="danger";btn.textContent="×";
+    btn.onclick=()=>{
+      assets.splice(i,1);persist();clearStats();
+    };
+    remove.appendChild(btn);tr.appendChild(remove);
+    tbody.appendChild(tr);
+  });
+
+  if(!result || activeWeight===0){
+    $("ter").textContent="—";
+  }else if(missingTER.length){
+    $("ter").textContent="Incomplete";
+    $("ter").title="Missing TER: "+missingTER.join(", ");
+  }else{
+    $("ter").textContent=pct(knownTER/activeWeight);
+    $("ter").title="Weighted expense ratio";
+  }
+
+  $("periodLabel").textContent=
+    result?($("years").selectedOptions[0].text):"—";
+}
+
+$("add").onclick=()=>{
+  const ticker=$("ticker").value.trim().toUpperCase();
+  const weight=Number($("newWeight").value);
+  if(!/^[A-Z0-9.^=-]{1,22}$/.test(ticker)){
+    alert("Ticker ไม่ถูกต้อง");return;
+  }
+  if(!Number.isFinite(weight)||weight<0||weight>100){
+    alert("Weight ต้องเป็น 0–100");return;
+  }
+  if(assets.some(x=>x.ticker===ticker)){
+    alert("มี Ticker นี้แล้ว");return;
+  }
+  if(assets.length>=20){
+    alert("เพิ่มได้สูงสุด 20 ตัว");return;
+  }
+  assets.push({ticker,weight});
+  persist();clearStats();
+  $("ticker").value="";
+};
+
+$("equal").onclick=()=>{
+  if(!assets.length)return;
+  const each=100/assets.length;
+  assets.forEach((a,i)=>{
+    a.weight=i===assets.length-1
+      ?100-each*(assets.length-1):each;
+  });
+  persist();clearStats();
+};
+
+$("normalize").onclick=()=>{
+  const s=sumWeight();
+  if(s<=0)return;
+  assets.forEach(a=>a.weight=a.weight/s*100);
+  persist();clearStats();
+};
+
+function showPortfolio(r){
+  const m=r.portfolio||{};
+  const ids={
+    pcagr:pct(m.cagr),pvol:pct(m.volatility),
+    pmdd:pct(m.max_drawdown),
+    psharpe:dec(m.sharpe),
+    psortino:dec(m.sortino),
+    pcalmar:dec(m.calmar),
+    proll:pct(m.rolling_latest),
+    pmonths:m.observations||"—"
+  };
+  Object.entries(ids).forEach(([id,v])=>$(id).textContent=v);
+  $("portfolioMethod").textContent=
+    m.method||"ข้อมูลพอร์ตรวมไม่เพียงพอ";
+
+  const d=r.dca||{};
+  $("ending").textContent=money(d.ending_value);
+  $("contributed").textContent=money(d.total_contributed);
+  $("profit").textContent=money(d.profit);
+  $("roi").textContent=
+    d.total_contributed>0
+    ?pct(d.profit/d.total_contributed):"—";
+  draw(d.points||[]);
+}
+
+function matrix(id,data,percent=false){
+  const target=$(id);
+  target.replaceChildren();
+  if(!data){target.textContent="ไม่มีข้อมูล";return}
+  const table=document.createElement("table");
+  const head=document.createElement("tr");
+  cell(head,"Ticker");
+  assets.forEach(a=>cell(head,a.ticker));
+  table.appendChild(head);
+  assets.forEach(a=>{
+    const tr=document.createElement("tr");
+    cell(tr,a.ticker);
+    assets.forEach(b=>{
+      const v=data[a.ticker]?.[b.ticker];
+      const td=cell(tr,v==null?"—":percent?pct(v):dec(v));
+      if(typeof v==="number"){
+        td.style.background=percent
+          ?`rgba(67,214,170,${Math.max(0,v)*.24})`
+          :`rgba(112,182,255,${Math.abs(v)*.2})`;
+      }
+    });
+    table.appendChild(tr);
+  });
+  target.appendChild(table);
+}
+
+function showDetails(r){
+  const rolling=$("rollingRows");
+  const fundamentals=$("fundamentals");
+  rolling.replaceChildren();fundamentals.replaceChildren();
+
+  assets.forEach(a=>{
+    const d=r.data?.[a.ticker]||{};
+    const m=d.metrics||{};
+    const p=d.profile||{};
+
+    const t=document.createElement("tr");
+    [
+      a.ticker,pct(m.rolling_latest),
+      pct(m.rolling_min),pct(m.rolling_max),
+      m.start||"—",m.end||"—"
+    ].forEach(x=>cell(t,x));
+    rolling.appendChild(t);
+
+    const f=document.createElement("tr");
+    [
+      a.ticker,p.name||"—",p.type||"—",
+      p.sector||p.category||"—",
+      dec(p.pe),dec(p.forward_pe),
+      dec(p.pb),dec(p.beta),
+      money(p.market_cap),
+      pct(p.expense)
+    ].forEach(x=>cell(f,x));
+    fundamentals.appendChild(f);
+  });
+}
+
+function draw(points){
+  const canvas=$("dcaChart");
+  const width=canvas.clientWidth||800;
+  const height=320;
+  const ratio=window.devicePixelRatio||1;
+  canvas.width=width*ratio;
+  canvas.height=height*ratio;
+  const ctx=canvas.getContext("2d");
+  ctx.scale(ratio,ratio);
+  ctx.clearRect(0,0,width,height);
+  if(points.length<2)return;
+
+  const L=65,R=16,T=35,B=38;
+  const W=width-L-R,H=height-T-B;
+  const max=Math.max(1,...points.map(p=>p.value||0));
+
+  ctx.font="12px Arial";
+  ctx.fillStyle="#a5bdd0";
+  ctx.strokeStyle="#304b60";
+
+  for(let k=0;k<=4;k++){
+    const y=T+H*k/4;
+    ctx.beginPath();ctx.moveTo(L,y);
+    ctx.lineTo(L+W,y);ctx.stroke();
+    ctx.fillText((max*(1-k/4)/1000).toFixed(0)+"K",5,y+4);
+  }
+
+  function line(key,color){
+    ctx.beginPath();
+    points.forEach((p,i)=>{
+      const x=L+i/(points.length-1)*W;
+      const y=T+H*(1-(p[key]||0)/max);
+      if(i===0)ctx.moveTo(x,y);
+      else ctx.lineTo(x,y);
+    });
+    ctx.strokeStyle=color;ctx.lineWidth=2.5;ctx.stroke();
+  }
+
+  line("contributed","#8198ad");
+  line("value","#43d6aa");
+  ctx.fillStyle="#8198ad";ctx.fillText("Contributed",L,20);
+  ctx.fillStyle="#43d6aa";ctx.fillText("Portfolio Value",L+110,20);
+  ctx.fillStyle="#a5bdd0";
+  ctx.fillText(points[0].date,L,height-10);
+  ctx.fillText(points.at(-1).date,Math.max(L,width-105),height-10);
+}
+
+$("analyze").onclick=async()=>{
+  const total=sumWeight();
+  if(!assets.length||Math.abs(total-100)>.01){
+    $("status").textContent="กรุณาให้สัดส่วนรวมเท่ากับ 100%";
+    return;
+  }
+
+  const button=$("analyze");
+  button.disabled=true;
+  $("status").textContent="กำลังดึงข้อมูลและคำนวณพอร์ต...";
+
+  try{
+    const response=await fetch("/api/analyze",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        tickers:assets.map(a=>a.ticker),
+        weights:Object.fromEntries(
+          assets.map(a=>[a.ticker,a.weight])
+        ),
+        years:$("years").value,
+        rolling:Number($("rolling").value),
+        rf:Number($("rf").value)/100,
+        initial_capital:Number($("initial").value),
+        monthly_contribution:Number($("monthly").value)
+      })
+    });
+
+    const r=await response.json();
+    if(!response.ok)throw Error(r.error||"Backend Error");
+
+    result=r;
+    render();showPortfolio(r);
+    showDetails(r);
+    matrix("corr",r.correlation);
+    matrix("overlap",r.overlap,true);
+
+    $("method").textContent=
+      (r.method||"")+" | Last fetched: "+(r.asof||"—");
+
+    const failed=Object.keys(r.errors||{});
+    $("status").textContent=failed.length
+      ?"บาง Ticker มีปัญหา: "+failed.join(", ")
+      :"วิเคราะห์ข้อมูลสำเร็จ · "+(r.asof||"");
+
+  }catch(e){
+    $("status").textContent="Error: "+e.message;
+  }finally{
+    button.disabled=false;
+  }
+};
+
+window.addEventListener("resize",()=>{
+  if(result?.dca?.points)draw(result.dca.points);
+});
+render();
 </script>
-<!-- END LATTE PERSONAL PORTFOLIO BUILDER -->
-</body></html>
+</body>
+</html>
