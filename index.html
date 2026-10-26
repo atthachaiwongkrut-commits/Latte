@@ -615,5 +615,437 @@ window.addEventListener("resize",()=>{
 });
 render();
 </script>
+
+<!-- LATTE FUTURE PORTFOLIO FORECAST -->
+<style>
+#futureForecast .forecast-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  gap:12px;
+  margin:18px 0;
+}
+#futureForecast .forecast-card {
+  background:#0a1b2a;
+  padding:17px;
+  border-radius:12px;
+}
+#futureForecast .forecast-card small {
+  color:#96b6cc;
+  display:block;
+}
+#futureForecast .forecast-card strong {
+  display:block;
+  font-size:24px;
+  margin-top:8px;
+}
+#futureForecast .forecast-table {
+  overflow-x:auto;
+}
+#futureForecast .forecast-table table {
+  min-width:760px;
+}
+#futureForecast .forecast-note {
+  font-size:13px;
+  color:#96b6cc;
+  line-height:1.8;
+}
+</style>
+
+<script>
+(() => {
+  // Assumptions only, NOT actual future returns.
+  const defaults = {
+    VOO:  {mu:8, vol:17, ter:0.03},
+    QQQM: {mu:9, vol:24, ter:0.15},
+    QQQ:  {mu:9, vol:24, ter:0.18},
+    SCHG: {mu:9, vol:23, ter:0.04},
+    VXUS: {mu:7, vol:18, ter:null},
+    VT:   {mu:8, vol:17, ter:null}
+  };
+
+  const escapeHTML = s =>
+    String(s).replace(/[&<>"']/g,c=>({
+      "&":"&amp;","<":"&lt;",">":"&gt;",
+      '"':"&quot;","'":"&#39;"
+    })[c]);
+
+  const fmtMoney = n =>
+    Number(n).toLocaleString("en-US",{
+      maximumFractionDigits:0
+    });
+
+  const fmtPct = n => (n*100).toFixed(2)+"%";
+
+  const today = new Date();
+  const futureDate = years => {
+    const d=new Date(today);
+    d.setFullYear(d.getFullYear()+years);
+    return d.toLocaleDateString("en-CA");
+  };
+
+  // Hide historical result panels; retain Builder and Settings.
+  document.querySelectorAll("section.panel").forEach(el=>{
+    const title=el.querySelector("h2")?.textContent.trim();
+    if(title && ![
+      "Portfolio Builder",
+      "Analysis Settings"
+    ].includes(title)){
+      el.style.display="none";
+    }
+  });
+
+  document.querySelectorAll("div.two").forEach(el=>{
+    el.style.display="none";
+  });
+
+  // Repurpose existing settings.
+  const settings=document.getElementById("years");
+  settings.innerHTML=`
+    <option value="5">Next 5 Years</option>
+    <option value="10">Next 10 Years</option>
+    <option value="20" selected>Next 20 Years</option>
+    <option value="30">Next 30 Years</option>
+  `;
+
+  const settingsPanel=settings.closest(".panel");
+  settingsPanel.querySelector("h2").textContent=
+    "Future Forecast Settings";
+
+  const label=settings.parentElement.querySelector("label");
+  if(label)label.textContent="Future Horizon";
+
+  const rollingField=document.getElementById("rolling")
+    ?.closest(".field");
+  if(rollingField)rollingField.style.display="none";
+
+  const button=document.getElementById("analyze");
+  button.textContent="Forecast Portfolio";
+
+  const forecast=document.createElement("section");
+  forecast.id="futureForecast";
+  forecast.className="panel";
+
+  settingsPanel.insertAdjacentElement("afterend",forecast);
+
+  // Seeded pseudo-random sampling for reproducible results.
+  let seed;
+  function resetSeed(){seed=20261027}
+  function random(){
+    seed=(1664525*seed+1013904223)>>>0;
+    return (seed+.5)/4294967296;
+  }
+  function normal(){
+    const u=Math.max(random(),1e-12);
+    const v=random();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  }
+  function quantile(values,q){
+    const a=[...values].sort((x,y)=>x-y);
+    if(!a.length)return NaN;
+    const i=(a.length-1)*q;
+    const lo=Math.floor(i),hi=Math.ceil(i);
+    return a[lo]+(a[hi]-a[lo])*(i-lo);
+  }
+
+  function readAssets(){
+    return assets.filter(a=>Number(a.weight)>0)
+      .map(a=>{
+        const saved=assumptions[a.ticker];
+        const d=saved||defaults[a.ticker]||
+          {mu:7,vol:25,ter:null};
+        return {
+          ticker:a.ticker,
+          weight:Number(a.weight)/100,
+          mu:Number(d.mu),
+          vol:Number(d.vol),
+          ter:d.ter===null ? null:Number(d.ter)
+        };
+      });
+  }
+
+  let assumptions={};
+  try{
+    assumptions=JSON.parse(
+      localStorage.getItem("latteForecastAssumptions")||"{}"
+    );
+  }catch{}
+
+  function assumptionTable(){
+    let rows=readAssets().map(a=>`
+      <tr>
+        <td>${escapeHTML(a.ticker)}</td>
+        <td>${(a.weight*100).toFixed(1)}%</td>
+        <td><input type="number" step="0.5"
+          data-forecast="${escapeHTML(a.ticker)}"
+          data-field="mu" value="${a.mu}"></td>
+        <td><input type="number" step="0.5"
+          data-forecast="${escapeHTML(a.ticker)}"
+          data-field="vol" value="${a.vol}"></td>
+        <td><input type="number" step="0.01"
+          data-forecast="${escapeHTML(a.ticker)}"
+          data-field="ter"
+          placeholder="Unknown"
+          value="${a.ter===null?"":a.ter}"></td>
+      </tr>
+    `).join("");
+
+    return `
+      <h2>Future Portfolio Forecast</h2>
+      <p>Forecast Start: ${futureDate(0)}
+        · Forecast End: ${futureDate(Number(settings.value))}
+      </p>
+      <h3>Assumptions by Asset</h3>
+      <div class="forecast-table">
+        <table>
+          <thead><tr>
+            <th>Ticker</th><th>Weight</th>
+            <th>Expected Return %/yr</th>
+            <th>Volatility %/yr</th>
+            <th>TER %/yr</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <p class="forecast-note">
+        อัตราผลตอบแทนและความผันผวนเป็นสมมติฐานสำหรับ
+        การจำลอง ไม่ใช่การคาดการณ์ที่ยืนยันได้จากตลาด
+        ส่วน TER ที่ไม่ทราบจะเว้นว่าง
+      </p>
+      <div class="controls">
+        <div class="field">
+          <label>Assumed Correlation Between Assets</label>
+          <input id="futureCorr" type="number"
+            min="0" max="0.99" step="0.05" value="0.65">
+        </div>
+        <button id="runFuture">Run Future Simulation</button>
+      </div>
+      <div id="futureResult"></div>
+    `;
+  }
+
+  function prepare(){
+    forecast.innerHTML=assumptionTable();
+
+    document.querySelectorAll("[data-forecast]")
+      .forEach(input=>{
+        input.addEventListener("change",()=>{
+          const ticker=input.dataset.forecast;
+          const field=input.dataset.field;
+          const d=assumptions[ticker]||
+            defaults[ticker]||
+            {mu:7,vol:25,ter:null};
+
+          const value=input.value.trim();
+          assumptions[ticker]={
+            ...d,
+            [field]:value===""?null:Number(value)
+          };
+          localStorage.setItem(
+            "latteForecastAssumptions",
+            JSON.stringify(assumptions)
+          );
+        });
+      });
+
+    document.getElementById("runFuture")
+      .onclick=simulate;
+  }
+
+  function simulate(){
+    const selected=readAssets();
+    const total=selected.reduce((s,a)=>s+a.weight,0);
+
+    if(!selected.length||Math.abs(total-1)>0.0001){
+      alert("น้ำหนักพอร์ตต้องรวม 100%");
+      return;
+    }
+
+    if(selected.some(a=>
+      !Number.isFinite(a.mu) ||
+      !Number.isFinite(a.vol) ||
+      a.mu<=-100 || a.vol<0
+    )){
+      alert("ตรวจสอบสมมติฐาน Return และ Volatility");
+      return;
+    }
+
+    const years=Number(settings.value);
+    const months=years*12;
+    const initial=Math.max(0,Number(
+      document.getElementById("initial").value)||0);
+    const monthly=Math.max(0,Number(
+      document.getElementById("monthly").value)||0);
+    const rf=(Number(
+      document.getElementById("rf").value)||0)/100;
+    const corrInput=Number(
+      document.getElementById("futureCorr").value);
+    const rho=Math.max(0,Math.min(.99,
+      Number.isFinite(corrInput)?corrInput:.65));
+
+    const feeKnown=selected.every(a=>a.ter!==null);
+    const knownFee=selected.reduce((sum,a)=>
+      sum+a.weight*(a.ter||0)/100,0);
+
+    const paths=700;
+    const finalValues=[],cagrs=[],drawdowns=[];
+    const sharpes=[],sortinos=[],calmars=[];
+    const terminal12=[];
+    let sample=[];
+
+    resetSeed();
+
+    for(let path=0;path<paths;path++){
+      let value=initial;
+      let nav=1;
+      let peak=1;
+      let mdd=0;
+      let cumulative=initial;
+      const rets=[];
+      const curve=[initial];
+
+      for(let m=1;m<=months;m++){
+        const shared=normal();
+        let portfolioReturn=0;
+
+        for(const a of selected){
+          const vol=a.vol/100;
+          const expected=a.mu/100;
+
+          // Correlated lognormal monthly returns.
+          const z=Math.sqrt(rho)*shared+
+            Math.sqrt(1-rho)*normal();
+
+          const drift=(
+            Math.log1p(expected)-.5*vol*vol
+          )/12;
+
+          const assetReturn=Math.exp(
+            drift+vol/Math.sqrt(12)*z
+          )-1;
+
+          portfolioReturn+=a.weight*assetReturn;
+        }
+
+        // Subtract known fund fees approximately.
+        portfolioReturn-=knownFee/12;
+
+        nav*=1+portfolioReturn;
+        peak=Math.max(peak,nav);
+        mdd=Math.min(mdd,nav/peak-1);
+
+        value=value*(1+portfolioReturn)+monthly;
+        cumulative+=monthly;
+        rets.push(portfolioReturn);
+
+        if(path===0)curve.push(value);
+      }
+
+      const cagr=Math.pow(nav,1/years)-1;
+      const mean=rets.reduce((s,r)=>s+r,0)/rets.length;
+      const variance=rets.reduce((s,r)=>
+        s+(r-mean)**2,0)/(rets.length-1);
+      const sigma=Math.sqrt(variance);
+      const monthlyRf=Math.pow(1+rf,1/12)-1;
+      const downside=Math.sqrt(
+        rets.reduce((s,r)=>
+          s+Math.min(r-monthlyRf,0)**2,0
+        )/rets.length
+      );
+
+      finalValues.push(value);
+      cagrs.push(cagr);
+      drawdowns.push(mdd);
+      sharpes.push(sigma>0?
+        (mean-monthlyRf)/sigma*Math.sqrt(12):0);
+      sortinos.push(downside>0?
+        (mean-monthlyRf)/downside*Math.sqrt(12):0);
+      calmars.push(mdd<0?cagr/Math.abs(mdd):0);
+
+      terminal12.push(
+        rets.slice(-12).reduce((p,r)=>p*(1+r),1)-1
+      );
+    }
+
+    const pessimistic=quantile(finalValues,.10);
+    const median=quantile(finalValues,.50);
+    const optimistic=quantile(finalValues,.90);
+    const invested=initial+monthly*months;
+
+    const cards=[
+      ["Forecast Start",futureDate(0)],
+      ["Forecast End",futureDate(years)],
+      ["Projected CAGR (Median)",fmtPct(quantile(cagrs,.5))],
+      ["Projected Volatility",
+        fmtPct(Math.sqrt(
+          selected.reduce((s,a)=>
+            s+(a.weight*a.vol/100)**2,0)
+        ))+"*"],
+      ["Simulated MDD (Median)",
+        fmtPct(quantile(drawdowns,.5))],
+      ["Simulated Sharpe",quantile(sharpes,.5).toFixed(2)],
+      ["Simulated Sortino",quantile(sortinos,.5).toFixed(2)],
+      ["Simulated Calmar",quantile(calmars,.5).toFixed(2)],
+      ["Future 12M Return (Median)",
+        fmtPct(quantile(terminal12,.5))],
+      ["Weighted TER",
+        feeKnown?fmtPct(knownFee):"Incomplete"],
+      ["Total Invested",fmtMoney(invested)],
+      ["Projected Ending Value (Median)",fmtMoney(median)],
+      ["Projected Profit (Median)",
+        fmtMoney(median-invested)],
+      ["Bear Case (P10)",fmtMoney(pessimistic)],
+      ["Base Case (P50)",fmtMoney(median)],
+      ["Bull Case (P90)",fmtMoney(optimistic)]
+    ];
+
+    document.getElementById("futureResult").innerHTML=`
+      <h3>Future Forecast Results</h3>
+      <div class="forecast-grid">
+        ${cards.map(([name,val])=>`
+          <div class="forecast-card">
+            <small>${name}</small>
+            <strong>${val}</strong>
+          </div>
+        `).join("")}
+      </div>
+      <p class="forecast-note">
+        Monte Carlo: ${paths} simulated paths,
+        monthly rebalancing, monthly end-of-period DCA.
+        Results are nominal and before taxes, trading fees and FX.
+        ${feeKnown?
+          "TER has been deducted approximately.":
+          "Some TER values are missing: the model only deducts known TER."}
+        *Displayed volatility is a rough reference based on
+        individual volatilities, not the full correlated
+        portfolio volatility.
+        P10/P50/P90 represent percentiles of simulations,
+        not guaranteed outcomes.
+      </p>
+    `;
+  }
+
+  // Replace the old historical Analyze behavior.
+  button.onclick=()=>{
+    prepare();
+    simulate();
+    document.getElementById("status").textContent=
+      "Future forecast calculated from assumptions";
+  };
+
+  settings.addEventListener("change",prepare);
+
+  // Refresh forecast when asset selections change.
+  document.getElementById("add")
+    .addEventListener("click",()=>setTimeout(prepare,0));
+  document.getElementById("equal")
+    .addEventListener("click",()=>setTimeout(prepare,0));
+  document.getElementById("normalize")
+    .addEventListener("click",()=>setTimeout(prepare,0));
+
+  prepare();
+  simulate();
+})();
+</script>
+<!-- END LATTE FUTURE FORECAST -->
 </body>
 </html>
