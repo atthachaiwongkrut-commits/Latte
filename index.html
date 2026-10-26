@@ -20,4 +20,296 @@ $('profiles').innerHTML=tickers.filter(t=>v.data[t]).map(t=>{let p=v.data[t].pro
 $('status').className='state';$('status').textContent=`อัปเดต ${v.asof} · ข้อมูลสำเร็จ ${Object.keys(v.data).length}/${tickers.length} Tickers` + (Object.keys(v.errors).length?' · บางตัวโหลดไม่สำเร็จ':'');
 }catch(e){if(my!==serial)return;$('status').className='state error';$('status').textContent='เชื่อมข้อมูลไม่ได้: '+e.message+' — ต้องเปิดเว็บผ่าน start_windows.bat / server.py และมีอินเทอร์เน็ต';}}
 renderChips();load();
-</script></body></html>
+</script>
+<!-- LATTE PERSONAL PORTFOLIO BUILDER -->
+<style>
+#lattePB {
+  max-width: 1300px;
+  margin: 30px auto;
+  padding: 24px;
+  background: #10212f;
+  border: 1px solid #304659;
+  border-radius: 18px;
+  color: white;
+  font-family: system-ui, sans-serif;
+}
+#lattePB h2 {margin-top:0}
+#lattePB p {color:#a8bdce}
+#lattePB input {
+  background:#081724;
+  color:white;
+  border:1px solid #425b6b;
+  padding:12px;
+  border-radius:9px;
+  width:100%;
+}
+#lattePB button {
+  cursor:pointer;
+  padding:11px 15px;
+  background:#286f63;
+  border:0;
+  border-radius:9px;
+  color:white;
+  font-weight:bold;
+}
+#lattePB .pb-controls {
+  display:grid;
+  grid-template-columns:2fr 1fr auto auto;
+  gap:10px;
+  margin:20px 0;
+}
+#lattePB .pb-scroll {overflow-x:auto}
+#lattePB table {
+  width:100%;
+  border-collapse:collapse;
+  min-width:850px;
+}
+#lattePB th,#lattePB td {
+  padding:12px;
+  border-bottom:1px solid #324657;
+  text-align:left;
+}
+#lattePB th {color:#94d9e5}
+#lattePB td input {width:90px}
+#lattePB .pb-summary {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:12px;
+  margin:20px 0;
+}
+#lattePB .pb-card {
+  background:#0a1926;
+  padding:15px;
+  border-radius:12px;
+}
+#lattePB .pb-card strong {
+  display:block;
+  font-size:24px;
+  margin-top:6px;
+}
+#lattePB .pb-error {color:#ff9292}
+@media(max-width:650px) {
+  #lattePB .pb-controls {grid-template-columns:1fr 1fr}
+}
+</style>
+
+<section id="lattePB">
+  <h2>Personal Portfolio Builder</h2>
+  <p>เลือกหุ้นหรือ ETF เอง ปรับน้ำหนัก และเปรียบเทียบผลตอบแทนกับความเสี่ยงย้อนหลัง</p>
+
+  <div class="pb-controls">
+    <input id="pbTicker" placeholder="Ticker เช่น VOO, NVDA, GOOGL">
+    <input id="pbWeight" type="number" placeholder="Weight %" min="0" max="100">
+    <button id="pbAdd">+ Add</button>
+    <button id="pbAnalyze">Analyze</button>
+  </div>
+
+  <div id="pbMessage"></div>
+  <div class="pb-summary" id="pbSummary"></div>
+
+  <div class="pb-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Weight</th>
+          <th>CAGR</th>
+          <th>Volatility</th>
+          <th>Max Drawdown</th>
+          <th>Sharpe</th>
+          <th>Sortino</th>
+          <th>Calmar</th>
+          <th>Remove</th>
+        </tr>
+      </thead>
+      <tbody id="pbRows"></tbody>
+    </table>
+  </div>
+
+  <p>สถิติมาจากข้อมูลย้อนหลังที่เซิร์ฟเวอร์ส่งกลับ ช่องที่ไม่มีข้อมูลจะแสดง —</p>
+</section>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const saved = localStorage.getItem("lattePersonalPortfolio");
+  let portfolio;
+
+  try {
+    portfolio = saved ? JSON.parse(saved) : [
+      {ticker:"VOO",weight:60},
+      {ticker:"QQQM",weight:25},
+      {ticker:"SCHG",weight:15}
+    ];
+    if (!Array.isArray(portfolio)) throw Error();
+  } catch {
+    portfolio = [];
+  }
+
+  let metrics = {};
+
+  function save() {
+    localStorage.setItem(
+      "lattePersonalPortfolio",
+      JSON.stringify(portfolio)
+    );
+  }
+
+  function percentage(value) {
+    return typeof value === "number"
+      ? (value*100).toFixed(2)+"%"
+      : "—";
+  }
+
+  function ratio(value) {
+    return typeof value === "number"
+      ? value.toFixed(2)
+      : "—";
+  }
+
+  function render() {
+    const total = portfolio.reduce(
+      (sum,item) => sum+item.weight,0
+    );
+
+    $("pbSummary").innerHTML = `
+      <div class="pb-card">
+        Assets <strong>${portfolio.length}</strong>
+      </div>
+      <div class="pb-card">
+        Total Weight <strong>${total.toFixed(1)}%</strong>
+      </div>
+      <div class="pb-card">
+        Allocation <strong style="font-size:16px">
+          ${Math.abs(total-100)<0.01?"Valid":"Adjust to 100%"}
+        </strong>
+      </div>
+    `;
+
+    $("pbRows").replaceChildren();
+
+    portfolio.forEach((item,index) => {
+      const m=metrics[item.ticker] || {};
+      const tr=document.createElement("tr");
+
+      const name=document.createElement("td");
+      name.textContent=item.ticker;
+      tr.appendChild(name);
+
+      const weightCell=document.createElement("td");
+      const weightInput=document.createElement("input");
+      weightInput.type="number";
+      weightInput.min="0";
+      weightInput.max="100";
+      weightInput.step="0.5";
+      weightInput.value=item.weight;
+      weightInput.onchange=()=>{
+        item.weight=Math.max(0,Math.min(100,
+          Number(weightInput.value)||0));
+        save();
+        render();
+      };
+      weightCell.appendChild(weightInput);
+      tr.appendChild(weightCell);
+
+      const values=[
+        percentage(m.cagr),
+        percentage(m.volatility),
+        percentage(m.max_drawdown),
+        ratio(m.sharpe),
+        ratio(m.sortino),
+        ratio(m.calmar)
+      ];
+
+      values.forEach(v=>{
+        const td=document.createElement("td");
+        td.textContent=v;
+        tr.appendChild(td);
+      });
+
+      const remove=document.createElement("td");
+      const btn=document.createElement("button");
+      btn.textContent="×";
+      btn.onclick=()=>{
+        portfolio.splice(index,1);
+        save();
+        render();
+      };
+      remove.appendChild(btn);
+      tr.appendChild(remove);
+      $("pbRows").appendChild(tr);
+    });
+  }
+
+  $("pbAdd").onclick=()=>{
+    const ticker=$("pbTicker").value.trim().toUpperCase();
+    const weight=Number($("pbWeight").value)||0;
+
+    if(!/^[A-Z0-9.^=-]{1,22}$/.test(ticker)){
+      $("pbMessage").textContent="Ticker ไม่ถูกต้อง";
+      return;
+    }
+    if(portfolio.some(x=>x.ticker===ticker)){
+      $("pbMessage").textContent="มีหุ้นตัวนี้แล้ว";
+      return;
+    }
+    if(weight<0 || weight>100){
+      $("pbMessage").textContent="Weight ต้องอยู่ระหว่าง 0–100";
+      return;
+    }
+
+    portfolio.push({ticker,weight});
+    save();
+    $("pbTicker").value="";
+    $("pbWeight").value="";
+    $("pbMessage").textContent="";
+    render();
+  };
+
+  $("pbAnalyze").onclick=async()=>{
+    const total=portfolio.reduce((s,x)=>s+x.weight,0);
+    if(Math.abs(total-100)>0.01){
+      $("pbMessage").textContent="กรุณาให้ Weight รวมเป็น 100%";
+      return;
+    }
+    $("pbMessage").textContent="กำลังดึงข้อมูล...";
+
+    try {
+      const response=await fetch("/api/analyze",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          tickers:portfolio.map(x=>x.ticker),
+          weights:Object.fromEntries(
+            portfolio.map(x=>[x.ticker,x.weight])
+          ),
+          years:5,
+          rolling:12,
+          rf:0.03
+        })
+      });
+
+      const result=await response.json();
+      if(!response.ok) throw Error(result.error||"API error");
+
+      metrics={};
+      for(const [ticker,data] of Object.entries(result.data||{})){
+        metrics[ticker]=data.metrics||{};
+      }
+
+      const failed=Object.keys(result.errors||{});
+      $("pbMessage").textContent=failed.length
+        ? "ข้อมูลบางตัวไม่พร้อม: "+failed.join(", ")
+        : "อัปเดตข้อมูลเรียบร้อย";
+      render();
+    } catch(error) {
+      $("pbMessage").textContent=
+        "ดึงข้อมูลไม่ได้: "+error.message;
+    }
+  };
+
+  render();
+})();
+</script>
+<!-- END LATTE PERSONAL PORTFOLIO BUILDER -->
+</body></html>
