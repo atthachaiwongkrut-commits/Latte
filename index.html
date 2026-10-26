@@ -131,7 +131,7 @@ canvas {width:100%;height:320px}
   <th>Ticker</th><th>Weight %</th><th>CAGR</th>
   <th>Volatility</th><th>Max Drawdown</th>
   <th>Sharpe</th><th>Sortino</th><th>Calmar</th>
-  <th>TER</th><th>Projection Start</th><th>Projection End (+20Y)</th>
+  <th>Historical Start</th><th>Historical End</th>
   <th>Remove</th>
 </tr></thead>
 <tbody id="assetRows"></tbody>
@@ -346,17 +346,12 @@ function render(){
       dec(m.sharpe),dec(m.sortino),dec(m.calmar)
     ].forEach(v=>cell(tr,v));
 
-    const exp=p.expense;
-    cell(tr,typeof exp==="number"?pct(exp):"—");
-    cell(tr, new Date().toLocaleDateString("en-CA"));
-cell(
-  tr,
-  new Date(
-    new Date().getFullYear() + 20,
-    new Date().getMonth(),
-    new Date().getDate()
-  ).toLocaleDateString("en-CA")
-);
+   
+const exp=p.expense;
+cell(tr,typeof exp==="number"?pct(exp):"—");
+cell(tr,m.start||"—");
+cell(tr,m.end||"—");
+    
 
     if(a.weight>0){
       activeWeight+=a.weight;
@@ -1047,5 +1042,85 @@ render();
 })();
 </script>
 <!-- END LATTE FUTURE FORECAST -->
+
+<script>
+(() => {
+  const builder = document.getElementById("assetRows")
+    ?.closest("section.panel");
+
+  if (!builder) return;
+
+  const controls = builder.querySelector(".controls");
+
+  const box = document.createElement("div");
+  box.className = "controls";
+  box.style.marginTop = "18px";
+
+  box.innerHTML = `
+    <div class="field">
+      <label>Historical Comparison Period</label>
+      <select id="historicalYears">
+        <option value="3">Past 3 Years</option>
+        <option value="5" selected>Past 5 Years</option>
+        <option value="10">Past 10 Years</option>
+        <option value="max">Maximum Available</option>
+      </select>
+    </div>
+    <button id="historicalAnalyze">
+      Analyze Historical Data
+    </button>
+    <span id="historicalStatus" class="muted"></span>
+  `;
+
+  controls.insertAdjacentElement("afterend", box);
+
+  document.getElementById("historicalAnalyze").onclick =
+    async () => {
+
+    const status = document.getElementById("historicalStatus");
+    const button = document.getElementById("historicalAnalyze");
+
+    if (!assets.length) {
+      status.textContent = "กรุณาเพิ่มหุ้นก่อน";
+      return;
+    }
+
+    button.disabled = true;
+    status.textContent = "กำลังโหลดข้อมูลย้อนหลัง...";
+
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          tickers: assets.map(a => a.ticker),
+          years: document.getElementById("historicalYears").value,
+          rolling: 12,
+          rf: 0.03
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error("HTTP " + response.status);
+      }
+
+      const data = await response.json();
+
+      result = data;
+      render();
+
+      const errors = Object.keys(data.errors || {});
+      status.textContent = errors.length
+        ? "ข้อมูลไม่ครบ: " + errors.join(", ")
+        : "Historical comparison updated";
+
+    } catch (error) {
+      status.textContent = "Error: " + error.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
+})();
+</script>
 </body>
 </html>
