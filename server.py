@@ -110,6 +110,183 @@ def analyze():
         'asof':pd.Timestamp.now().strftime('%Y-%m-%d %H:%M'),'years':years,'rolling':window,
         'method':'Monthly adjusted close; annualized statistics; percent overlap from reported top holdings only (partial/lower bound).'})
 
+# ===== LATTE PORTFOLIO ANALYTICS FIX =====
+# Add this BEFORE: if __name__ == '__main__':
+
+_original_analyze = app.view_functions["analyze"]
+
+def analyze_with_portfolio():
+    response = _original_analyze()
+
+    # Preserve original error responses
+    if isinstance(response, tuple):
+        return response
+
+    result = response.get_json()
+    args = request.get_json(silent=True) or {}
+
+    raw_weights = args.get("weights") or {}
+    if not raw_weights:
+        return response
+
+    try:
+        weights = {
+            str(k).upper(): float(v)
+            for k, v in raw_weights.items()
+            if float(v) > 0
+        }
+
+        if not weights:
+            raise ValueError("ไม่มีหุ้นที่มีน้ำหนักมากกว่า 0%")
+
+        total = sum(weights.values())
+
+        if abs(total - 100) > 0.01:
+            raise ValueError("น้ำหนักพอร์ตต้องรวม 100%")
+
+        missing = [
+            ticker for ticker in weights
+            if ticker not in result.get("data", {})
+        ]
+
+        if missing:
+            raise ValueError(
+                "โหลดข้อมูลหุ้นไม่สำเร็จ: " +
+                ", ".join(missing)
+            )
+
+        years = str(args.get("years", "5"))
+        rolling = int(args.get("rolling", 12))
+        rf = float(args.get("rf", 0.03))
+
+        # Fetch cached monthly adjusted prices
+        price_series = {}
+
+        for ticker in weights:
+            record = fetch(ticker)
+            prices = record["s"].copy()
+
+            if years != "max":
+                cutoff = (
+                    prices.index.max() -
+                    pd.DateOffset(years=int(years))
+                )
+                prices = prices[prices.index >= cutoff]
+
+            price_series[ticker] = prices
+
+        # Use only dates shared by all assets
+        prices = pd.concat(
+            price_series,
+            axis=1,
+            join="inner"
+        ).dropna()
+
+        if len(prices) < 13:
+            raise ValueError(
+                "ข้อมูลที่ซ้อนทับกันไม่ถึง 13 เดือน"
+            )
+
+        # Monthly asset returns
+        asset_returns = prices.pct_change().dropna()
+
+        w = pd.Series({
+            ticker: weight / 100
+            for ticker, weight in weights.items()
+        })
+
+        # Monthly rebalanced portfolio
+        portfolio_returns = (
+            asset_returns[w.index] * w
+        ).sum(axis=1)
+
+        # Build synthetic portfolio NAV
+        nav = pd.Series(
+            [1.0] + list(
+                (1 + portfolio_returns).cumprod()
+            ),
+            index=prices.index,
+            dtype=float
+        )
+
+        metrics = calculate(
+            nav, "max", rolling, rf
+        )
+
+        if metrics is None:
+            raise ValueError(
+                "คำนวณสถิติพอร์ตไม่ได้"
+            )
+
+        metrics["method"] = (
+            "Monthly rebalanced portfolio; "
+            "common adjusted-price history; "
+            "gross historical returns before "
+            "transaction costs and taxes."
+        )
+
+        result["portfolio"] = metrics
+
+        # Historical DCA simulation
+        initial = max(
+            0, float(args.get("initial_capital", 0))
+        )
+
+        monthly = max(
+            0, float(args.get("monthly_contribution", 0))
+        )
+
+        value = initial
+        contributed = initial
+
+        points = [{
+            "date": prices.index[0].strftime("%Y-%m-%d"),
+            "value": round(value, 2),
+            "contributed": round(contributed, 2)
+        }]
+
+        for date, monthly_return in portfolio_returns.items():
+
+            # Existing money grows first
+            value *= (1 + float(monthly_return))
+
+            # New contribution at month end
+            value += monthly
+            contributed += monthly
+
+            points.append({
+                "date": date.strftime("%Y-%m-%d"),
+                "value": round(value, 2),
+                "contributed": round(contributed, 2)
+            })
+
+        result["dca"] = {
+            "ending_value": round(value, 2),
+            "total_contributed": round(contributed, 2),
+            "profit": round(value - contributed, 2),
+            "points": points
+        }
+
+        result["portfolio_period"] = {
+            "start": prices.index[0].strftime("%Y-%m-%d"),
+            "end": prices.index[-1].strftime("%Y-%m-%d"),
+            "months": len(portfolio_returns)
+        }
+
+    except Exception as exc:
+        result["portfolio"] = {
+            "method": "Portfolio error: " + str(exc)
+        }
+        result["dca"] = {}
+        result["portfolio_error"] = str(exc)
+
+    response.set_json(result)
+    return response
+
+app.view_functions["analyze"] = analyze_with_portfolio
+
+# ===== END LATTE PORTFOLIO FIX =====
+
 if __name__=='__main__':
     print('OPEN: http://127.0.0.1:5000')
     app.run(host='0.0.0.0',port=int(__import__('os').environ.get('PORT','5000')),debug=False)
