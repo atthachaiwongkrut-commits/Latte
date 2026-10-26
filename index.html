@@ -231,7 +231,8 @@ canvas {width:100%;height:320px}
 <thead><tr>
   <th>Ticker</th><th>Rolling Latest</th>
   <th>Rolling Min</th><th>Rolling Max</th>
-  <th>Period Start</th><th>Period End</th>
+  <th>Projection Start</th><th>Projection End (+10Y)</th>
+  <th>Projection Start</th><th>Projection End (+20Y)</th>
 </tr></thead>
 <tbody id="rollingRows"></tbody>
 </table>
@@ -483,7 +484,10 @@ function showDetails(r){
     [
       a.ticker,pct(m.rolling_latest),
       pct(m.rolling_min),pct(m.rolling_max),
-      m.start||"—",m.end||"—"
+      new Date().toLocaleDateString("en-CA"),
+new Date(new Date().getFullYear()+20,
+         new Date().getMonth(),
+         new Date().getDate()).toLocaleDateString("en-CA")
     ].forEach(x=>cell(t,x));
     rolling.appendChild(t);
 
