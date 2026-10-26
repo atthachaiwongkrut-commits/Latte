@@ -1,292 +1,510 @@
+
 from flask import Flask, request, jsonify, send_from_directory
-import pandas as pd, numpy as np, yfinance as yf
-import re, math, time
+from werkzeug.exceptions import HTTPException
 from concurrent.futures import ThreadPoolExecutor
+import pandas as pd
+import numpy as np
+import yfinance as yf
+import math
+import time
+import re
+import os
 
-app=Flask(__name__,static_folder='.')
-cache={}
-VALID=re.compile(r'^[A-Z0-9^.=\-]{1,22}$')
+app = Flask(__name__, static_folder=".")
 
-def clean(x):
-    if x is None: return None
+CACHE = {}
+VALID = re.compile(r"^[A-Z0-9^.=\-]{1,22}$")
+
+# Annual expense ratios, stored as fractions.
+# Reference values; update when fund fees change.
+ETF_TER = {
+    "VOO": 0.0003,
+    "QQQM": 0.0015,
+    "QQQ": 0.0018,
+    "SCHG": 0.0004,
+}
+
+def clean(value):
     try:
-        y=float(x)
-        return round(y,5) if np.isfinite(y) else None
-    except (TypeError,ValueError):return None
+        value = float(value)
+        return round(value, 6) if math.isfinite(value) else None
+    except (TypeError, ValueError):
+        return None
+
 
 def fetch(symbol):
-    now=time.time()
-    if symbol in cache and now-cache[symbol][0]<3600: return cache[symbol][1]
-    t=yf.Ticker(symbol)
-    df=t.history(period='max',interval='1mo',auto_adjust=True,actions=False,timeout=18)
-    if df.empty or len(df)<3:raise ValueError('ไม่พบข้อมูลราคาย้อนหลังเพียงพอ')
-    s=df['Close'].dropna().astype(float)
-    s.index=pd.to_datetime(s.index).tz_localize(None).to_period('M').to_timestamp('M')
-    s=s[~s.index.duplicated(keep='last')]
-    if len(s)<3:raise ValueError('ข้อมูลย้อนหลังไม่เพียงพอ')
-    info={}
-    try:info=t.get_info() or {}
-    except Exception:pass
-    holdings={}
-    fund=info.get('quoteType','').upper() in ('ETF','MUTUALFUND')
-    if fund:
+    now = time.time()
+
+    if symbol in CACHE:
+        timestamp, result = CACHE[symbol]
+        if now - timestamp < 3600:
+            return result
+
+    ticker = yf.Ticker(symbol)
+
+    df = ticker.history(
+        period="max",
+        interval="1mo",
+        auto_adjust=True,
+        actions=False,
+        timeout=20,
+    )
+
+    if df.empty:
+        raise ValueError("ไม่มีข้อมูลราคาสำหรับ " + symbol)
+
+    prices = df["Close"].dropna().astype(float)
+
+    dates = pd.to_datetime(prices.index)
+    if dates.tz is not None:
+        dates = dates.tz_localize(None)
+
+    prices.index = dates.to_period("M").to_timestamp("M")
+    prices = prices[~prices.index.duplicated(keep="last")]
+    prices = prices.sort_index()
+
+    if len(prices) < 13:
+        raise ValueError("ข้อมูลย้อนหลังน้อยกว่า 13 เดือน")
+
+    info = {}
+    try:
+        info = ticker.get_info() or {}
+    except Exception:
+        pass
+
+    quote_type = str(info.get("quoteType") or "Unknown")
+    is_fund = quote_type.upper() in ("ETF", "MUTUALFUND")
+    if symbol in ETF_TER:
+        is_fund = True
+        quote_type = "ETF"
+
+    holdings = {}
+    if is_fund:
         try:
-            h=t.funds_data.top_holdings
-            if isinstance(h,pd.DataFrame):
-                for ticker,row in h.iterrows():
-                    weight=row.get('Holding Percent')
-                    if pd.notna(weight): holdings[str(ticker).upper()]=float(weight)
-        except Exception:pass
-    result={'s':s,'info':{'name':info.get('longName') or info.get('shortName') or symbol,
-        'type':info.get('quoteType') or 'Unknown','sector':info.get('sector'),
-        'category':info.get('category'),'expense':clean(info.get('annualReportExpenseRatio') or info.get('totalAssetsExpenseRatio')),
-        'description':(info.get('longBusinessSummary') or info.get('description') or '')[:850],
-        'currency':info.get('currency'), 'source':'Yahoo Finance via yfinance'}, 'holdings':holdings}
-    cache[symbol]=(now,result)
+            h = ticker.funds_data.top_holdings
+            if isinstance(h, pd.DataFrame):
+                for name, row in h.iterrows():
+                    weight = clean(row.get("Holding Percent"))
+                    if weight is not None and weight > 0:
+                        holdings[str(name).upper()] = weight
+        except Exception:
+            pass
+
+    expense = ETF_TER.get(symbol)
+
+    # For other ETFs, accept only a valid fractional fee.
+    if expense is None and is_fund:
+        candidate = clean(info.get("annualReportExpenseRatio"))
+        if candidate is not None and 0 <= candidate < 0.10:
+            expense = candidate
+
+    profile = {
+        "name": info.get("longName")
+                or info.get("shortName")
+                or symbol,
+        "type": quote_type,
+        "sector": info.get("sector"),
+        "category": info.get("category"),
+        "currency": info.get("currency"),
+        "description": (
+            info.get("longBusinessSummary")
+            or info.get("description")
+            or ""
+        )[:800],
+        "expense": expense if is_fund else 0.0,
+        "pe": clean(info.get("trailingPE")),
+        "forward_pe": clean(info.get("forwardPE")),
+        "pb": clean(info.get("priceToBook")),
+        "beta": clean(info.get("beta")),
+        "market_cap": clean(info.get("marketCap")),
+    }
+
+    result = {
+        "s": prices,
+        "info": profile,
+        "holdings": holdings,
+    }
+
+    CACHE[symbol] = (now, result)
     return result
 
-def calculate(s,years,window,rf):
-    if years and years!='max':
-        cutoff=s.index.max()-pd.DateOffset(years=int(years))
-        s=s[s.index>=cutoff]
-    if len(s)<13:return None
-    returns=s.pct_change().dropna()
-    n=len(returns)
-    cagr=(s.iloc[-1]/s.iloc[0])**(12/n)-1
-    vol=returns.std(ddof=1)*np.sqrt(12)
-    dd=s/s.cummax()-1
-    mdd=dd.min()
-    monthly_rf=(1+rf)**(1/12)-1
-    excess=returns-monthly_rf
-    sharpe=excess.mean()/returns.std(ddof=1)*np.sqrt(12) if returns.std(ddof=1)>0 else None
-    downside=np.minimum(excess,0)
-    downside_dev=np.sqrt((downside**2).mean())
-    sortino=excess.mean()/downside_dev*np.sqrt(12) if downside_dev>0 else None
-    rolling=(s/s.shift(window)-1).dropna()
-    return {'cagr':clean(cagr),'volatility':clean(vol),'max_drawdown':clean(mdd),'sharpe':clean(sharpe),
-        'sortino':clean(sortino),'calmar':clean(cagr/abs(mdd) if mdd else None),
-        'rolling_latest':clean(rolling.iloc[-1]) if len(rolling) else None,
-        'rolling_min':clean(rolling.min()) if len(rolling) else None,'rolling_max':clean(rolling.max()) if len(rolling) else None,
-        'observations':n+1,'start':s.index[0].strftime('%Y-%m-%d'),'end':s.index[-1].strftime('%Y-%m-%d')}
 
-@app.get('/')
-def index():return send_from_directory('.','index.html')
+def trim(series, years):
+    if years == "max":
+        return series
 
-@app.post('/api/analyze')
+    cutoff = series.index.max() - pd.DateOffset(
+        years=int(years)
+    )
+    return series[series.index >= cutoff]
+
+
+def calculate(series, years, rolling_window, rf):
+    s = trim(series.dropna().sort_index(), years)
+
+    if len(s) < 13:
+        return None
+
+    returns = s.pct_change().dropna()
+
+    if returns.empty:
+        return None
+
+    n = len(returns)
+
+    if s.iloc[0] <= 0 or s.iloc[-1] <= 0:
+        return None
+
+    cagr = (s.iloc[-1] / s.iloc[0]) ** (12 / n) - 1
+
+    volatility = returns.std(ddof=1) * np.sqrt(12)
+
+    drawdown = s / s.cummax() - 1
+    mdd = drawdown.min()
+
+    monthly_rf = (1 + rf) ** (1 / 12) - 1
+    excess = returns - monthly_rf
+
+    std = returns.std(ddof=1)
+
+    sharpe = (
+        excess.mean() / std * np.sqrt(12)
+        if std > 0 else None
+    )
+
+    downside = np.minimum(excess, 0)
+    downside_dev = np.sqrt(np.mean(downside ** 2))
+
+    sortino = (
+        excess.mean() / downside_dev * np.sqrt(12)
+        if downside_dev > 0 else None
+    )
+
+    calmar = (
+        cagr / abs(mdd) if mdd < 0 else None
+    )
+
+    rolling = (
+        s / s.shift(rolling_window) - 1
+    ).dropna()
+
+    return {
+        "cagr": clean(cagr),
+        "volatility": clean(volatility),
+        "max_drawdown": clean(mdd),
+        "sharpe": clean(sharpe),
+        "sortino": clean(sortino),
+        "calmar": clean(calmar),
+        "rolling_latest": clean(rolling.iloc[-1])
+            if len(rolling) else None,
+        "rolling_min": clean(rolling.min())
+            if len(rolling) else None,
+        "rolling_max": clean(rolling.max())
+            if len(rolling) else None,
+        "observations": n,
+        "start": s.index[0].strftime("%Y-%m-%d"),
+        "end": s.index[-1].strftime("%Y-%m-%d"),
+    }
+
+
+@app.get("/")
+def index():
+    return send_from_directory(".", "index.html")
+
+
+@app.get("/api/health")
+def health():
+    return jsonify({
+        "status": "ok",
+        "version": "Latte Portfolio API v3",
+    })
+
+
+@app.post("/api/analyze")
 def analyze():
-    args=request.get_json(silent=True) or {}
-    syms=[str(x).strip().upper() for x in args.get('tickers',[])][:20]
-    syms=list(dict.fromkeys(syms))
-    if not syms or any(not VALID.fullmatch(s) for s in syms):return jsonify(error='Ticker ไม่ถูกต้อง'),400
-    years=str(args.get('years','5'))
-    if years not in ('3','5','10','max'): years='5'
-    window=int(args.get('rolling',12))
-    if window not in (12,36,60):window=12
-    rf=float(args.get('rf',0.03))
-    rf=max(-0.05,min(0.3,rf))
-    with ThreadPoolExecutor(max_workers=min(6,len(syms))) as pool:
-        futures={s:pool.submit(fetch,s) for s in syms}
-        records={};errors={}
-        for sym,f in futures.items():
-            try:records[sym]=f.result()
-            except Exception as e:errors[sym]=str(e)[:150]
-    output={}
-    for sym,x in records.items():
-        output[sym]={'metrics':calculate(x['s'],years,window,rf),'profile':x['info'],
-                     'holdings_count':len(x['holdings'])}
-    corr={};overlap={}
-    for a in syms:
-        corr[a]={};overlap[a]={}
-        for b in syms:
-            if a==b: corr[a][b]=1.0 if a in records else None;overlap[a][b]=1.0 if a in records and records[a]['holdings'] else None;continue
-            if a not in records or b not in records:corr[a][b]=None;overlap[a][b]=None;continue
-            sa=records[a]['s'];sb=records[b]['s']
-            common=pd.concat([sa.pct_change(),sb.pct_change()],axis=1,join='inner').dropna()
-            if years!='max' and len(common): common=common[common.index>=common.index.max()-pd.DateOffset(years=int(years))]
-            corr[a][b]=clean(common.iloc[:,0].corr(common.iloc[:,1])) if len(common)>=12 else None
-            h1=records[a]['holdings'];h2=records[b]['holdings']
-            overlap[a][b]=clean(sum(min(v,h2.get(k,0)) for k,v in h1.items())) if h1 and h2 else None
-    return jsonify({'data':output,'errors':errors,'correlation':corr,'overlap':overlap,
-        'asof':pd.Timestamp.now().strftime('%Y-%m-%d %H:%M'),'years':years,'rolling':window,
-        'method':'Monthly adjusted close; annualized statistics; percent overlap from reported top holdings only (partial/lower bound).'})
-
-# ===== LATTE PORTFOLIO ANALYTICS FIX =====
-# Add this BEFORE: if __name__ == '__main__':
-
-_original_analyze = app.view_functions["analyze"]
-
-def analyze_with_portfolio():
-    response = _original_analyze()
-
-    # Preserve original error responses
-    if isinstance(response, tuple):
-        return response
-
-    result = response.get_json()
     args = request.get_json(silent=True) or {}
 
-    raw_weights = args.get("weights") or {}
-    if not raw_weights:
-        return response
+    symbols = [
+        str(x).strip().upper()
+        for x in args.get("tickers", [])
+    ]
 
-    try:
-        weights = {
-            str(k).upper(): float(v)
-            for k, v in raw_weights.items()
-            if float(v) > 0
+    symbols = list(dict.fromkeys(symbols))[:20]
+
+    if not symbols or any(
+        not VALID.fullmatch(x) for x in symbols
+    ):
+        return jsonify(error="Ticker ไม่ถูกต้อง"), 400
+
+    years = str(args.get("years", "5"))
+    if years not in ("3", "5", "10", "max"):
+        years = "5"
+
+    rolling = int(args.get("rolling", 12))
+    if rolling not in (12, 36, 60):
+        rolling = 12
+
+    rf = float(args.get("rf", 0.03))
+    rf = max(-0.05, min(0.30, rf))
+
+    records = {}
+    errors = {}
+
+    with ThreadPoolExecutor(
+        max_workers=min(6, len(symbols))
+    ) as pool:
+        futures = {
+            symbol: pool.submit(fetch, symbol)
+            for symbol in symbols
         }
 
-        if not weights:
-            raise ValueError("ไม่มีหุ้นที่มีน้ำหนักมากกว่า 0%")
+        for symbol, future in futures.items():
+            try:
+                records[symbol] = future.result()
+            except Exception as e:
+                errors[symbol] = str(e)[:200]
 
-        total = sum(weights.values())
+    data = {}
 
-        if abs(total - 100) > 0.01:
-            raise ValueError("น้ำหนักพอร์ตต้องรวม 100%")
-
-        missing = [
-            ticker for ticker in weights
-            if ticker not in result.get("data", {})
-        ]
-
-        if missing:
-            raise ValueError(
-                "โหลดข้อมูลหุ้นไม่สำเร็จ: " +
-                ", ".join(missing)
-            )
-
-        years = str(args.get("years", "5"))
-        rolling = int(args.get("rolling", 12))
-        rf = float(args.get("rf", 0.03))
-
-        # Fetch cached monthly adjusted prices
-        price_series = {}
-
-        for ticker in weights:
-            record = fetch(ticker)
-            prices = record["s"].copy()
-
-            if years != "max":
-                cutoff = (
-                    prices.index.max() -
-                    pd.DateOffset(years=int(years))
-                )
-                prices = prices[prices.index >= cutoff]
-
-            price_series[ticker] = prices
-
-        # Use only dates shared by all assets
-        prices = pd.concat(
-            price_series,
-            axis=1,
-            join="inner"
-        ).dropna()
-
-        if len(prices) < 13:
-            raise ValueError(
-                "ข้อมูลที่ซ้อนทับกันไม่ถึง 13 เดือน"
-            )
-
-        # Monthly asset returns
-        asset_returns = prices.pct_change().dropna()
-
-        w = pd.Series({
-            ticker: weight / 100
-            for ticker, weight in weights.items()
-        })
-
-        # Monthly rebalanced portfolio
-        portfolio_returns = (
-            asset_returns[w.index] * w
-        ).sum(axis=1)
-
-        # Build synthetic portfolio NAV
-        nav = pd.Series(
-            [1.0] + list(
-                (1 + portfolio_returns).cumprod()
+    for symbol, record in records.items():
+        data[symbol] = {
+            "metrics": calculate(
+                record["s"], years, rolling, rf
             ),
-            index=prices.index,
-            dtype=float
-        )
+            "profile": record["info"],
+            "holdings_count": len(record["holdings"]),
+        }
 
-        metrics = calculate(
-            nav, "max", rolling, rf
-        )
+    # Correlation and holdings overlap
+    correlation = {}
+    overlap = {}
 
-        if metrics is None:
-            raise ValueError(
-                "คำนวณสถิติพอร์ตไม่ได้"
+    for a in symbols:
+        correlation[a] = {}
+        overlap[a] = {}
+
+        for b in symbols:
+            if a not in records or b not in records:
+                correlation[a][b] = None
+                overlap[a][b] = None
+                continue
+
+            if a == b:
+                correlation[a][b] = 1.0
+            else:
+                pair = pd.concat(
+                    [
+                        records[a]["s"].pct_change(),
+                        records[b]["s"].pct_change()
+                    ],
+                    axis=1,
+                    join="inner"
+                ).dropna()
+
+                pair = trim(pair, years)
+
+                correlation[a][b] = (
+                    clean(pair.iloc[:, 0].corr(pair.iloc[:, 1]))
+                    if len(pair) >= 12 else None
+                )
+
+            h1 = records[a]["holdings"]
+            h2 = records[b]["holdings"]
+
+            overlap[a][b] = (
+                clean(
+                    sum(
+                        min(value, h2.get(name, 0))
+                        for name, value in h1.items()
+                    )
+                )
+                if h1 and h2 else None
             )
 
-        metrics["method"] = (
-            "Monthly rebalanced portfolio; "
-            "common adjusted-price history; "
-            "gross historical returns before "
-            "transaction costs and taxes."
-        )
+    result = {
+        "data": data,
+        "errors": errors,
+        "correlation": correlation,
+        "overlap": overlap,
+        "asof": pd.Timestamp.now(
+            tz="Asia/Bangkok"
+        ).strftime("%Y-%m-%d %H:%M %Z"),
+        "years": years,
+        "rolling": rolling,
+        "method": (
+            "Monthly adjusted close; monthly rebalancing; "
+            "annualized historical statistics. "
+            "ETF overlap uses reported holdings only."
+        ),
+        "portfolio": {},
+        "dca": {},
+    }
 
-        result["portfolio"] = metrics
+    # Calculate the portfolio only when weights supplied.
+    raw_weights = args.get("weights")
 
-        # Historical DCA simulation
-        initial = max(
-            0, float(args.get("initial_capital", 0))
-        )
+    if raw_weights is not None:
+        try:
+            weights = {
+                symbol: float(raw_weights.get(symbol, 0))
+                for symbol in symbols
+            }
 
-        monthly = max(
-            0, float(args.get("monthly_contribution", 0))
-        )
+            if any(
+                not math.isfinite(v) or v < 0
+                for v in weights.values()
+            ):
+                raise ValueError("น้ำหนักหุ้นไม่ถูกต้อง")
 
-        value = initial
-        contributed = initial
+            total = sum(weights.values())
 
-        points = [{
-            "date": prices.index[0].strftime("%Y-%m-%d"),
-            "value": round(value, 2),
-            "contributed": round(contributed, 2)
-        }]
+            if abs(total - 100) > 0.01:
+                raise ValueError(
+                    "น้ำหนักพอร์ตต้องรวมเป็น 100%"
+                )
 
-        for date, monthly_return in portfolio_returns.items():
+            active = {
+                s: w / 100
+                for s, w in weights.items()
+                if w > 0
+            }
 
-            # Existing money grows first
-            value *= (1 + float(monthly_return))
+            missing = [
+                s for s in active if s not in records
+            ]
 
-            # New contribution at month end
-            value += monthly
-            contributed += monthly
+            if missing:
+                raise ValueError(
+                    "โหลดราคาหุ้นไม่สำเร็จ: " +
+                    ", ".join(missing)
+                )
 
-            points.append({
-                "date": date.strftime("%Y-%m-%d"),
-                "value": round(value, 2),
-                "contributed": round(contributed, 2)
-            })
+            # Align all active assets on shared months.
+            prices = pd.concat(
+                {
+                    s: records[s]["s"]
+                    for s in active
+                },
+                axis=1,
+                join="inner"
+            ).dropna().sort_index()
 
-        result["dca"] = {
-            "ending_value": round(value, 2),
-            "total_contributed": round(contributed, 2),
-            "profit": round(value - contributed, 2),
-            "points": points
-        }
+            prices = trim(prices, years)
 
-        result["portfolio_period"] = {
-            "start": prices.index[0].strftime("%Y-%m-%d"),
-            "end": prices.index[-1].strftime("%Y-%m-%d"),
-            "months": len(portfolio_returns)
-        }
+            if len(prices) < 13:
+                raise ValueError(
+                    "ช่วงข้อมูลร่วมกันน้อยกว่า 13 เดือน"
+                )
 
-    except Exception as exc:
-        result["portfolio"] = {
-            "method": "Portfolio error: " + str(exc)
-        }
-        result["dca"] = {}
-        result["portfolio_error"] = str(exc)
+            monthly_returns = prices.pct_change().dropna()
+            allocation = pd.Series(active)
 
-    response.set_json(result)
-    return response
+            # Rebalance to target weights every month.
+            portfolio_returns = (
+                monthly_returns[allocation.index]
+                * allocation
+            ).sum(axis=1)
 
-app.view_functions["analyze"] = analyze_with_portfolio
+            nav = pd.Series(
+                [1.0] + list(
+                    (1 + portfolio_returns).cumprod()
+                ),
+                index=prices.index,
+                dtype=float
+            )
 
-# ===== END LATTE PORTFOLIO FIX =====
+            portfolio_metrics = calculate(
+                nav, "max", rolling, rf
+            )
 
-if __name__=='__main__':
-    print('OPEN: http://127.0.0.1:5000')
-    app.run(host='0.0.0.0',port=int(__import__('os').environ.get('PORT','5000')),debug=False)
+            if portfolio_metrics is None:
+                raise ValueError(
+                    "ข้อมูลไม่เพียงพอสำหรับคำนวณพอร์ต"
+                )
+
+            portfolio_metrics["method"] = (
+                "Monthly rebalanced portfolio. "
+                "Common adjusted-price history. "
+                "Before trading fees, taxes and FX."
+            )
+
+            result["portfolio"] = portfolio_metrics
+
+            initial = max(
+                0.0,
+                float(args.get("initial_capital", 0))
+            )
+            monthly = max(
+                0.0,
+                float(args.get("monthly_contribution", 0))
+            )
+
+            if not all(
+                math.isfinite(x) for x in [initial, monthly]
+            ):
+                raise ValueError("จำนวนเงินลงทุนไม่ถูกต้อง")
+
+            value = initial
+            contributed = initial
+
+            points = [{
+                "date": prices.index[0].strftime("%Y-%m-%d"),
+                "value": clean(value),
+                "contributed": clean(contributed),
+            }]
+
+            for date, monthly_return in portfolio_returns.items():
+                value *= 1 + float(monthly_return)
+                value += monthly
+                contributed += monthly
+
+                points.append({
+                    "date": date.strftime("%Y-%m-%d"),
+                    "value": clean(value),
+                    "contributed": clean(contributed),
+                })
+
+            result["dca"] = {
+                "ending_value": clean(value),
+                "total_contributed": clean(contributed),
+                "profit": clean(value - contributed),
+                "points": points,
+            }
+
+            result["portfolio_period"] = {
+                "start": prices.index[0].strftime("%Y-%m-%d"),
+                "end": prices.index[-1].strftime("%Y-%m-%d"),
+                "months": len(portfolio_returns),
+            }
+
+        except Exception as e:
+            # Keep individual stock data visible.
+            result["portfolio_error"] = str(e)
+            result["portfolio"] = {
+                "method": "Portfolio error: " + str(e)
+            }
+
+    return jsonify(result)
+
+
+@app.errorhandler(Exception)
+def handle_error(error):
+    if isinstance(error, HTTPException):
+        return jsonify(
+            error=error.description
+        ), error.code
+
+    app.logger.exception("API error")
+
+    return jsonify({
+        "error": "Server error: " + str(error)
+    }), 500
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=False
+    )
